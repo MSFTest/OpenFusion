@@ -1,0 +1,181 @@
+# -*- coding: utf-8 -*-
+"""
+transformer_ffn_block
+
+说明：
+    该文件实现 Transformer 风格的 FFN Block 原语，
+    供 operator_registry.py 中注册后的
+    torch.ops.fusionrepo.transformer_ffn_block 调用。
+
+功能：
+    对输入特征执行标准 Transformer FFN Block：
+
+        x
+        ↓
+        Linear(C -> hidden_dim)
+        ↓
+        ReLU
+        ↓
+        Linear(hidden_dim -> C)
+        ↓
+        Residual Add
+        ↓
+        LayerNorm
+
+    即：
+        out = LayerNorm(x + FFN(x))
+
+    该算子用于补齐 LoGoNet 中 FeatureAggregationLayer 在
+    MultiHeadAttention 之后的前馈增强部分。
+
+输入：
+    x: (B, N, C)
+        输入特征
+
+    w1: (hidden_dim, C)
+        第一层线性层权重
+
+    b1: (hidden_dim,)
+        第一层线性层偏置
+
+    w2: (C, hidden_dim)
+        第二层线性层权重
+
+    b2: (C,)
+        第二层线性层偏置
+
+    ln_weight: (C,)
+        LayerNorm 缩放参数
+
+    ln_bias: (C,)
+        LayerNorm 偏置参数
+
+    eps: float
+        LayerNorm 数值稳定项
+
+输出：
+    out: (B, N, C)
+"""
+
+from __future__ import annotations
+
+import torch
+import torch.nn.functional as F
+from torch.library import Library
+
+
+# ============================================================
+# 1) Python 实现（CompositeExplicitAutograd）
+# ============================================================
+def _transformer_ffn_block_impl(
+    x: torch.Tensor,
+    w1: torch.Tensor,
+    b1: torch.Tensor,
+    w2: torch.Tensor,
+    b2: torch.Tensor,
+    ln_weight: torch.Tensor,
+    ln_bias: torch.Tensor,
+    eps: float = 1e-5
+) -> torch.Tensor:
+    if x.dim() != 3:
+        raise ValueError("x must have shape (B, N, C)")
+
+    if w1.dim() != 2 or w2.dim() != 2:
+        raise ValueError("w1 and w2 must be 2D tensors")
+
+    if b1.dim() != 1 or b2.dim() != 1:
+        raise ValueError("b1 and b2 must be 1D tensors")
+
+    if ln_weight.dim() != 1 or ln_bias.dim() != 1:
+        raise ValueError("ln_weight and ln_bias must be 1D tensors")
+
+    B, N, C = x.shape
+
+    if w1.shape[1] != C:
+        raise ValueError("w1 shape must be (hidden_dim, C)")
+
+    hidden_dim = w1.shape[0]
+
+    if b1.shape[0] != hidden_dim:
+        raise ValueError("b1 shape must be (hidden_dim,)")
+
+    if w2.shape[0] != C or w2.shape[1] != hidden_dim:
+        raise ValueError("w2 shape must be (C, hidden_dim)")
+
+    if b2.shape[0] != C:
+        raise ValueError("b2 shape must be (C,)")
+
+    if ln_weight.shape[0] != C or ln_bias.shape[0] != C:
+        raise ValueError("ln_weight and ln_bias shape must be (C,)")
+
+    x_flat = x.reshape(B * N, C)
+
+    hidden = F.linear(x_flat, w1, b1)   # (B*N, hidden_dim)
+    hidden = F.relu(hidden)
+    ffn_out = F.linear(hidden, w2, b2)  # (B*N, C)
+
+    ffn_out = ffn_out.reshape(B, N, C)
+
+    out = x + ffn_out
+    out = F.layer_norm(
+        out,
+        normalized_shape=(C,),
+        weight=ln_weight,
+        bias=ln_bias,
+        eps=float(eps)
+    )
+
+    return out
+
+
+_lib_impl = Library("fusionrepo", "IMPL", "CompositeExplicitAutograd")
+_lib_impl.impl("transformer_ffn_block", _transformer_ffn_block_impl)
+
+
+# ============================================================
+# 2) Meta 实现
+# ============================================================
+def _transformer_ffn_block_meta(
+    x: torch.Tensor,
+    w1: torch.Tensor,
+    b1: torch.Tensor,
+    w2: torch.Tensor,
+    b2: torch.Tensor,
+    ln_weight: torch.Tensor,
+    ln_bias: torch.Tensor,
+    eps: float = 1e-5
+) -> torch.Tensor:
+    return torch.empty(
+        x.shape,
+        device="meta",
+        dtype=x.dtype
+    )
+
+
+_lib_meta = Library("fusionrepo", "IMPL", "Meta")
+_lib_meta.impl("transformer_ffn_block", _transformer_ffn_block_meta)
+
+
+# ============================================================
+# 3) Python 包装
+# ============================================================
+def transformer_ffn_block(
+    x: torch.Tensor,
+    w1: torch.Tensor,
+    b1: torch.Tensor,
+    w2: torch.Tensor,
+    b2: torch.Tensor,
+    ln_weight: torch.Tensor,
+    ln_bias: torch.Tensor,
+    eps: float = 1e-5
+) -> torch.Tensor:
+    return torch.ops.fusionrepo.transformer_ffn_block(
+        x,
+        w1,
+        b1,
+        w2,
+        b2,
+        ln_weight,
+        ln_bias,
+        float(eps)
+    )
