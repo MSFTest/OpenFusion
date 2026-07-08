@@ -19,12 +19,12 @@
 [![Model Zoo](https://img.shields.io/badge/released%20models-4-brightgreen)](#model-zoo)
 [![Status](https://img.shields.io/badge/status-active-success)](#whats-new)
 
-[Documentation](#introduction) |
+[Documentation](#documentation) |
 [Installation](#installation) |
 [Model Zoo](#model-zoo) |
 [Update News](#whats-new) |
 [Project Progress](#project-progress) |
-[Reporting Issues](https://github.com/MSFTest/OpenFusion/issues)
+[Reporting Issues](#reporting-issues)
 
 </div>
 
@@ -58,6 +58,12 @@ For the Ascend implementation corresponding to this repository, please see: [Asc
   Released models include train/test entry scripts, KITTI data loading logic, checkpoint configuration, and KITTI-format prediction export. The reconstructed fusion modules can be trained while freezing or fine-tuning external 2D/3D perception backbones.
 
 </details>
+
+## Documentation
+
+The README is the primary documentation entry for the current release. It includes the repository architecture, released model zoo, validated environment, KITTI dataset preparation, operator-based model reconstruction workflow, training commands, testing commands, and project progress.
+
+For implementation details, start from the corresponding model directory under `model/`, then follow its framework, initialization builder, and module files. Reusable operators are organized under `fusion_unit/`, `common/`, and `utils/`.
 
 ## What's New
 
@@ -281,6 +287,10 @@ Latest updates are listed first.
 ## Acknowledgement
 
 OpenFusion builds on the PyTorch ecosystem and uses MMDetection, MMDetection3D, MMEngine, MMCV, and OpenPCDet components for backbone initialization, feature extraction, 3D perception, and evaluation. We thank the authors of the original multimodal fusion papers and the open-source communities that make reproducible 3D perception research possible.
+
+## Reporting Issues
+
+If you encounter installation problems, missing checkpoints, dataset path errors, operator registration failures, or inconsistent KITTI evaluation results, please open an issue in the OpenFusion repository and include the model name, command line, environment versions, checkpoint paths, and the relevant error log.
 
 ## Citation
 
