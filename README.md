@@ -1,5 +1,6 @@
 <div align="center">
   <img src="resources/openfusion-logo.png" width="680"/>
+  <div>&nbsp;</div>
 
 [![Python](https://img.shields.io/badge/python-3.8-blue)](#installation)
 [![PyTorch](https://img.shields.io/badge/PyTorch-1.13.1%2Bcu117-ee4c2c)](#installation)
@@ -93,14 +94,16 @@ OpenFusion/
 
 | Method | Modality | Ours 3D AP (Easy/Mod./Hard) | Ours BEV AP (Easy/Mod./Hard) | Paper 3D AP (Easy/Mod./Hard) | Paper BEV AP (Easy/Mod./Hard) | Pretrained Weights |
 | --- | --- | --- | --- | --- | --- | --- |
-| CLOCs | LiDAR + Camera | **89.35 / 85.39 / 80.28** | **95.55 / 89.94 / 84.50** | 88.94 / 80.67 / 77.15 | 93.05 / 89.80 / 86.57 | [Download](https://drive.google.com/file/d/1Bqo5Q7DqQFM9B9myeS4m-iMzfPVWkwce/view?usp=drive_link) |
-| LoGoNet | LiDAR + Camera | 87.39 / 78.36 / 75.04 | **91.08 / 85.00 / 83.80** | 91.80 / 85.06 / 80.74 | - | [Download](https://drive.google.com/file/d/1W0yIp6YS6x9yD9g83YjJumCSLX6u0Soa/view?usp=drive_link) |
-| HMFI | LiDAR + Camera | **91.73 / 80.41 / 75.44** | **95.62 / 89.73 / 84.84** | 88.90 / 81.93 / 77.30 | - | [Download](https://drive.google.com/file/d/14n1WIC8r6CXTeoQWlzODQvXMEt27uD4s/view?usp=drive_link) |
-| BEVFusion | LiDAR + Camera | Available in repository evaluation outputs | Available in repository evaluation outputs | - | - | Local release |
+| [CLOCs](https://arxiv.org/abs/2009.00784) | LiDAR + Camera | **89.35 / 85.39 / 80.28** | **95.55 / 89.94 / 84.50** | 88.94 / 80.67 / 77.15 | 93.05 / 89.80 / 86.57 | [Download](https://drive.google.com/file/d/1Bqo5Q7DqQFM9B9myeS4m-iMzfPVWkwce/view?usp=drive_link) |
+| [LoGoNet](https://arxiv.org/abs/2303.03595) | LiDAR + Camera | 87.39 / 78.36 / 75.04 | **91.08 / 85.00 / 83.80** | 91.80 / 85.06 / 80.74 | - | [Download](https://drive.google.com/file/d/1W0yIp6YS6x9yD9g83YjJumCSLX6u0Soa/view?usp=drive_link) |
+| [HMFI](https://arxiv.org/abs/2210.09615) | LiDAR + Camera | **91.73 / 80.41 / 75.44** | **95.62 / 89.73 / 84.84** | 88.90 / 81.93 / 77.30 | - | [Download](https://drive.google.com/file/d/14n1WIC8r6CXTeoQWlzODQvXMEt27uD4s/view?usp=drive_link) |
+| [BEVFusion](https://arxiv.org/abs/2205.13542) | LiDAR + Camera | Available in repository evaluation outputs | Available in repository evaluation outputs | - | - | Local release |
 
 ## Installation
 
 This section follows the same installation style as the OpenMMLab toolboxes: create an isolated conda environment, install PyTorch first, install OpenMMLab dependencies with MIM, then install the remaining 3D perception dependencies and verify the repository.
+
+MMDetection and MMDetection3D are used by the released reference scripts as convenient default backbones and detector adapters. They are **not mandatory parts of the OpenFusion operator library**. You can replace them with your own image, LiDAR, radar, BEV, or detection backbones as long as the adapters under `backbone/` return the tensors expected by the reconstructed fusion modules.
 
 ### Prerequisites
 
@@ -154,6 +157,8 @@ nvidia-smi
 ### Step 3. Install OpenMMLab Dependencies
 
 Install MIM first, then install MMEngine, MMCV, MMDetection, and MMDetection3D. MIM is recommended because it resolves many binary compatibility details for OpenMMLab packages.
+
+This step is required only when you want to run the released scripts with their default MMDetection / MMDetection3D backbones. If you plug in your own backbone implementations, keep PyTorch and the OpenFusion operator dependencies, then implement compatible adapters in `backbone/`.
 
 ```bash
 pip install -U openmim
@@ -293,7 +298,7 @@ fused = torch.ops.fusionrepo.feature_fusion_weighted_sum(features, weights)
 
 A reconstructed model usually follows this pattern:
 
-1. Define external perception adapters in `backbone/`, such as an MMDetection image extractor or an MMDetection3D point-cloud detector.
+1. Define external perception adapters in `backbone/`, such as an MMDetection image extractor, an MMDetection3D point-cloud detector, or your own custom backbone.
 2. Select fusion operators from `fusion_unit/`, `common/`, and `utils/`.
 3. Assemble the model-level forward path in `model/{method}/{method}_framework.py`.
 4. Build checkpoints, losses, optimizers, freeze policies, and post-processing in `model/{method}/initialization/build_{method}_system.py`.
@@ -382,26 +387,6 @@ python model/bevfusion/test_bevfusion.py \
 ```
 
 Predictions are written in KITTI `label_2` style under the configured `--pred_dir`.
-
-## Project Progress
-
-Latest updates are listed first.
-
-- [x] Reconstructed Faraway-Frustum fusion module [2026-07-08]
-- [x] Released CLOCs, HMFI, and LoGoNet trained models [2026-06-26]
-- [x] Reconstructed BEVFusion fusion module [2026-06-21]
-- [x] Reconstructed EPNet++ fusion module [2026-06-15]
-- [x] Reconstructed EPNet fusion module [2026-06-15]
-- [x] Reconstructed PointPainting fusion module [2026-06-08]
-- [x] Reconstructed CenterFusion fusion module [2026-06-01]
-- [x] Reconstructed 3D-CVF fusion module [2026-05-25]
-- [x] Reconstructed F-ConvNet fusion module [2026-05-18]
-- [x] Reconstructed VirConv fusion module [2026-04-13]
-- [x] Reconstructed MPCF fusion module [2026-04-06]
-- [x] Reconstructed HMFI fusion module [2026-03-30]
-- [x] Reconstructed LoGoNet fusion module [2026-03-23]
-- [x] Reconstructed AVOD fusion module [2026-03-12]
-- [x] Reconstructed CLOCs_LQS fusion module [2026-03-07]
 
 ## Acknowledgement
 
