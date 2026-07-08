@@ -1,0 +1,287 @@
+<div align="center">
+  <img src="resources/openfusion-logo.png" width="680"/>
+  <div>&nbsp;</div>
+  <div align="center">
+    <b><font size="5">OpenFusion Hub</font></b>
+    <sup><i><font size="4">OPERATORIZED</font></i></sup>
+    &nbsp;&nbsp;&nbsp;&nbsp;
+    <b><font size="5">Multimodal 3D Perception</font></b>
+    <sup><i><font size="4">REBUILD & TRAIN</font></i></sup>
+  </div>
+  <div>&nbsp;</div>
+
+[![Python](https://img.shields.io/badge/python-3.8-blue)](#installation)
+[![PyTorch](https://img.shields.io/badge/PyTorch-1.13.1%2Bcu117-ee4c2c)](#installation)
+[![CUDA](https://img.shields.io/badge/CUDA-11.7-76b900)](#installation)
+[![MMDetection](https://img.shields.io/badge/MMDetection-3.3.0-007ec6)](#installation)
+[![MMDetection3D](https://img.shields.io/badge/MMDetection3D-1.4.0-007ec6)](#installation)
+[![OpenPCDet](https://img.shields.io/badge/OpenPCDet-0.6.0-13c2c2)](#installation)
+[![Model Zoo](https://img.shields.io/badge/released%20models-4-brightgreen)](#model-zoo)
+[![Status](https://img.shields.io/badge/status-active-success)](#whats-new)
+
+[Documentation](#introduction) |
+[Installation](#installation) |
+[Model Zoo](#model-zoo) |
+[Update News](#whats-new) |
+[Project Progress](#project-progress) |
+[Reporting Issues](https://github.com/MSFTest/OpenFusion/issues)
+
+</div>
+
+## Introduction
+
+OpenFusion is an operator-oriented research codebase for multimodal 3D object detection. It decomposes camera, LiDAR, radar, BEV, frustum, feature-level fusion, data-level fusion, and decision-level fusion pipelines into reusable PyTorch operators and composable neural blocks.
+
+Instead of treating each published fusion model as an isolated repository, OpenFusion rebuilds representative multimodal methods on top of a shared operator library. Users can inspect the fusion path, replace individual operators, assemble new models, and train reconstructed networks on KITTI with standard 2D/3D perception backbones.
+
+The current public model release focuses on four trained networks under `model/`: **BEVFusion**, **CLOCs**, **HMFI**, and **LoGoNet**.
+
+For the Ascend implementation corresponding to this repository, please see: [Ascend Version]().
+
+<details open>
+<summary>Major features</summary>
+
+- **Operatorized Fusion Design**
+
+  Fusion logic is decomposed into callable operators under `fusion_unit/`, `common/`, and `utils/`. Geometry projection, feature sampling, BEV alignment, attention fusion, IoU assignment, NMS, pair encoding, voxel grouping, and frustum construction can be reused across models.
+
+- **Composable Model Reconstruction**
+
+  Every reconstructed model is organized as a framework, an initialization builder, and model-specific modules. This makes it straightforward to swap a fusion operator, change a backbone adapter, or rebuild a paper pipeline from smaller units.
+
+- **Multi-Level Multimodal Fusion**
+
+  OpenFusion covers data-level, feature-level, and decision-level fusion, with both symmetric and asymmetric fusion patterns. The codebase is designed for camera-LiDAR, camera-radar, BEV, point, voxel, proposal, and detector-score fusion.
+
+- **Training-Ready Reference Networks**
+
+  Released models include train/test entry scripts, KITTI data loading logic, checkpoint configuration, and KITTI-format prediction export. The reconstructed fusion modules can be trained while freezing or fine-tuning external 2D/3D perception backbones.
+
+</details>
+
+## What's New
+
+**2026-07-08**: OpenFusion is organized as a GitHub repository with an operatorized multimodal fusion library and four released trained model directories: **BEVFusion**, **CLOCs**, **HMFI**, and **LoGoNet**.
+
+**2026-06-26**: Released trained model checkpoints and reconstruction pipelines for **CLOCs**, **HMFI**, and **LoGoNet**.
+
+**2026-06-21**: Completed the **BEVFusion** reconstruction with camera-view transformation, LiDAR BEV generation, BEV fusion, and detection task modules.
+
+## Architecture
+
+```text
+OpenFusion/
+├── backbone/                 # Adapters for image, point cloud, BEV, 2D detector, and 3D detector backbones
+├── common/                   # Shared neural components: heads, encoders, attention, pooling, RoI, voxel, and FFN blocks
+├── fusion_unit/              # Reusable fusion operators and learnable fusion blocks
+│   ├── asymmetric/           # One modality drives the fusion and auxiliary modalities provide evidence
+│   │   ├── data/             # Asymmetric data-level fusion
+│   │   ├── feature/          # Asymmetric feature-level fusion
+│   │   └── decision/         # Asymmetric decision-level fusion
+│   └── symmetric/            # Balanced or bidirectional multimodal fusion
+│       ├── data/             # Symmetric data-level fusion
+│       ├── feature/          # Symmetric feature-level fusion
+│       └── decision/         # Symmetric decision-level fusion
+├── model/                    # Reconstructed multimodal 3D detection networks
+│   ├── bevfusion/            # Camera-LiDAR BEV fusion pipeline
+│   ├── clocs/                # 2D-3D detection score fusion pipeline
+│   ├── hmfi/                 # Hierarchical multimodal feature interaction pipeline
+│   └── logonet/              # Local-global multimodal fusion pipeline
+└── utils/                    # Geometry, projection, voxelization, sampling, IoU, NMS, and KITTI utilities
+```
+
+## Model Zoo
+
+### KITTI 3D Object Detection Results: Car
+
+| Method | Modality | Ours 3D AP (Easy/Mod./Hard) | Ours BEV AP (Easy/Mod./Hard) | Paper 3D AP (Easy/Mod./Hard) | Paper BEV AP (Easy/Mod./Hard) | Pretrained Weights |
+| --- | --- | --- | --- | --- | --- | --- |
+| CLOCs | LiDAR + Camera | **89.35 / 85.39 / 80.28** | **95.55 / 89.94 / 84.50** | 88.94 / 80.67 / 77.15 | 93.05 / 89.80 / 86.57 | [Download](https://drive.google.com/file/d/1Bqo5Q7DqQFM9B9myeS4m-iMzfPVWkwce/view?usp=drive_link) |
+| LoGoNet | LiDAR + Camera | 87.39 / 78.36 / 75.04 | **91.08 / 85.00 / 83.80** | 91.80 / 85.06 / 80.74 | - | [Download](https://drive.google.com/file/d/1W0yIp6YS6x9yD9g83YjJumCSLX6u0Soa/view?usp=drive_link) |
+| HMFI | LiDAR + Camera | **91.73 / 80.41 / 75.44** | **95.62 / 89.73 / 84.84** | 88.90 / 81.93 / 77.30 | - | [Download](https://drive.google.com/file/d/14n1WIC8r6CXTeoQWlzODQvXMEt27uD4s/view?usp=drive_link) |
+
+## Installation
+
+OpenFusion was validated with the following environment:
+
+| Item | Version |
+| --- | --- |
+| Python | 3.8.20 |
+| PyTorch | 1.13.1+cu117 |
+| torchvision | 0.14.1+cu117 |
+| CUDA used by PyTorch | 11.7 |
+| NVIDIA Driver | 535.247.01 |
+| Server CUDA capability | 12.2 |
+| GPU | Tesla V100-SXM2-32GB x 2 |
+| MMCV | 2.1.0 |
+| MMDetection | 3.3.0 |
+| MMDetection3D | 1.4.0 |
+| MMEngine | 0.10.7 |
+| OpenPCDet | 0.6.0 |
+
+Activate your environment before training or testing:
+
+```bash
+conda activate fusionrepo
+python --version
+python -c "import torch; print(torch.__version__, torch.version.cuda)"
+nvidia-smi
+```
+
+The reported CUDA version in `nvidia-smi` is the maximum CUDA version supported by the driver. The runtime version used by this project is the CUDA version compiled into PyTorch, namely `torch.version.cuda == 11.7` in the validated setup.
+
+## Dataset Preparation
+
+OpenFusion uses the KITTI object detection format. The dataset can be placed outside the repository as long as the standard structure is preserved:
+
+```text
+/path/to/KITTI/
+└── training/
+    ├── image_2/
+    ├── velodyne/
+    ├── calib/
+    └── label_2/
+```
+
+Pass the dataset root to train/test scripts with:
+
+```bash
+--kitti_root /path/to/KITTI
+```
+
+Optional split files can be provided through `--split_file` or `--train_split_file` when supported by the selected model entry script.
+
+## Rebuilding Models with OpenFusion Operators
+
+OpenFusion operators are registered as a PyTorch namespace named `fusionrepo`. Importing `utils`, `common`, and `fusion_unit` activates the operator definitions and implementations:
+
+```python
+import torch
+import utils        # registers geometry, projection, IoU, NMS, and utility ops
+import common       # registers shared neural components
+import fusion_unit  # registers fusion-unit operators and blocks
+
+features = torch.randn(2, 128, 64)
+weights = torch.tensor([0.6, 0.4])
+fused = torch.ops.fusionrepo.feature_fusion_weighted_sum(features, weights)
+```
+
+A reconstructed model usually follows this pattern:
+
+1. Define external perception adapters in `backbone/`, such as an MMDetection image extractor or an MMDetection3D point-cloud detector.
+2. Select fusion operators from `fusion_unit/`, `common/`, and `utils/`.
+3. Assemble the model-level forward path in `model/{method}/{method}_framework.py`.
+4. Build checkpoints, losses, optimizers, freeze policies, and post-processing in `model/{method}/initialization/build_{method}_system.py`.
+5. Expose a train/test CLI in `model/{method}/test_{method}.py` or `model/{method}/test_script.py`.
+
+For example, HMFI uses the shared operator stack to lift image features into voxel space, align them with LiDAR tokens, run query-based feature fusion, and train a detection head:
+
+```text
+model/hmfi/
+├── hmfi_framework.py
+├── initialization/build_hmfi_system.py
+├── module/ivlm_module.py
+├── module/qfm_module.py
+├── module/vfim_module.py
+└── test_hmfi.py
+```
+
+This layout lets users replace a single operator, such as `feature_sampling_by_grid`, `compute_voxel_centroid`, `multihead_attention_fusion`, `nms3d`, or `feature_fusion_weighted_sum`, without rewriting the whole detection system.
+
+## Training
+
+Use the selected model entry script and provide KITTI, backbone checkpoints, and the fusion checkpoint output path. HMFI is shown below:
+
+```bash
+python model/hmfi/test_hmfi.py \
+  --mode train \
+  --kitti_root /path/to/KITTI \
+  --device cuda:0 \
+  --epochs 80 \
+  --batch_size 1 \
+  --image_ckpt ./checkpoints/faster_rcnn_r50_caffe_fpn_mstrain_1x_coco-5324cff8.pth \
+  --point_cloud_ckpt ./checkpoints/hv_PartA2_secfpn_2x8_cyclic_80e_kitti-3d-car_20210831_022017-cb7ff621.pth \
+  --save_ckpt ./checkpoints/hmfi_fusion_trained.pth
+```
+
+LoGoNet follows the same train/test style:
+
+```bash
+python model/logonet/test_script.py \
+  --mode train \
+  --kitti_root /path/to/KITTI \
+  --device cuda:0 \
+  --epochs 80 \
+  --batch_size 1 \
+  --image_ckpt ./checkpoints/faster_rcnn_r50_caffe_fpn_mstrain_1x_coco-5324cff8.pth \
+  --point_cloud_ckpt ./checkpoints/pv_rcnn_8xb2-80e_kitti-3d-3class_20221117_234428-b384d22f.pth \
+  --save_ckpt ./checkpoints/logonet_fusion_trained.pth
+```
+
+CLOCs uses `eval` instead of `test` for evaluation mode:
+
+```bash
+python model/clocs/test_script.py \
+  --mode train \
+  --kitti_root /path/to/KITTI \
+  --device cuda:0 \
+  --epochs 80 \
+  --fusion_ckpt ./checkpoints/clocs_fusion_trained.pth
+```
+
+## Testing
+
+Run evaluation with a trained fusion checkpoint and export KITTI-format predictions:
+
+```bash
+python model/hmfi/test_hmfi.py \
+  --mode test \
+  --kitti_root /path/to/KITTI \
+  --device cuda:0 \
+  --image_ckpt ./checkpoints/faster_rcnn_r50_caffe_fpn_mstrain_1x_coco-5324cff8.pth \
+  --point_cloud_ckpt ./checkpoints/hv_PartA2_secfpn_2x8_cyclic_80e_kitti-3d-car_20210831_022017-cb7ff621.pth \
+  --fusion_ckpt ./checkpoints/hmfi_fusion_trained.pth \
+  --pred_dir ./pred_kitti_hmfi
+```
+
+BEVFusion provides a native KITTI evaluation option:
+
+```bash
+python model/bevfusion/test_bevfusion.py \
+  --mode test \
+  --kitti_root /path/to/KITTI \
+  --device cuda:0 \
+  --fusion_ckpt ./checkpoints/bevfusion_fusion_last.pth \
+  --pred_dir results/bevfusion_kitti/data \
+  --evaluator native
+```
+
+Predictions are written in KITTI `label_2` style under the configured `--pred_dir`.
+
+## Project Progress
+
+Latest updates are listed first.
+
+- [x] Reconstructed Faraway-Frustum fusion module [2026-07-08]
+- [x] Released CLOCs, HMFI, and LoGoNet trained models [2026-06-26]
+- [x] Reconstructed BEVFusion fusion module [2026-06-21]
+- [x] Reconstructed EPNet++ fusion module [2026-06-15]
+- [x] Reconstructed EPNet fusion module [2026-06-15]
+- [x] Reconstructed PointPainting fusion module [2026-06-08]
+- [x] Reconstructed CenterFusion fusion module [2026-06-01]
+- [x] Reconstructed 3D-CVF fusion module [2026-05-25]
+- [x] Reconstructed F-ConvNet fusion module [2026-05-18]
+- [x] Reconstructed VirConv fusion module [2026-04-13]
+- [x] Reconstructed MPCF fusion module [2026-04-06]
+- [x] Reconstructed HMFI fusion module [2026-03-30]
+- [x] Reconstructed LoGoNet fusion module [2026-03-23]
+- [x] Reconstructed AVOD fusion module [2026-03-12]
+- [x] Reconstructed CLOCs_LQS fusion module [2026-03-07]
+
+## Acknowledgement
+
+OpenFusion builds on the PyTorch ecosystem and uses MMDetection, MMDetection3D, MMEngine, MMCV, and OpenPCDet components for backbone initialization, feature extraction, 3D perception, and evaluation. We thank the authors of the original multimodal fusion papers and the open-source communities that make reproducible 3D perception research possible.
+
+## Citation
+
+If OpenFusion helps your research, please cite this repository and the original papers corresponding to the reconstructed models you use.
