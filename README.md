@@ -1,14 +1,5 @@
 <div align="center">
   <img src="resources/openfusion-logo.png" width="680"/>
-  <div>&nbsp;</div>
-  <div align="center">
-    <b><font size="5">OpenFusion Hub</font></b>
-    <sup><i><font size="4">OPERATORIZED</font></i></sup>
-    &nbsp;&nbsp;&nbsp;&nbsp;
-    <b><font size="5">Multimodal 3D Perception</font></b>
-    <sup><i><font size="4">REBUILD & TRAIN</font></i></sup>
-  </div>
-  <div>&nbsp;</div>
 
 [![Python](https://img.shields.io/badge/python-3.8-blue)](#installation)
 [![PyTorch](https://img.shields.io/badge/PyTorch-1.13.1%2Bcu117-ee4c2c)](#installation)
@@ -105,10 +96,17 @@ OpenFusion/
 | CLOCs | LiDAR + Camera | **89.35 / 85.39 / 80.28** | **95.55 / 89.94 / 84.50** | 88.94 / 80.67 / 77.15 | 93.05 / 89.80 / 86.57 | [Download](https://drive.google.com/file/d/1Bqo5Q7DqQFM9B9myeS4m-iMzfPVWkwce/view?usp=drive_link) |
 | LoGoNet | LiDAR + Camera | 87.39 / 78.36 / 75.04 | **91.08 / 85.00 / 83.80** | 91.80 / 85.06 / 80.74 | - | [Download](https://drive.google.com/file/d/1W0yIp6YS6x9yD9g83YjJumCSLX6u0Soa/view?usp=drive_link) |
 | HMFI | LiDAR + Camera | **91.73 / 80.41 / 75.44** | **95.62 / 89.73 / 84.84** | 88.90 / 81.93 / 77.30 | - | [Download](https://drive.google.com/file/d/14n1WIC8r6CXTeoQWlzODQvXMEt27uD4s/view?usp=drive_link) |
+| BEVFusion | LiDAR + Camera | Available in repository evaluation outputs | Available in repository evaluation outputs | - | - | Local release |
 
 ## Installation
 
-OpenFusion was validated with the following environment:
+This section follows the same installation style as the OpenMMLab toolboxes: create an isolated conda environment, install PyTorch first, install OpenMMLab dependencies with MIM, then install the remaining 3D perception dependencies and verify the repository.
+
+### Prerequisites
+
+OpenFusion is developed and tested on Linux with NVIDIA GPUs. A CPU-only environment can import part of the operator library, but training and evaluating the released 3D detection models require CUDA-enabled PyTorch and GPU-compatible MMDetection3D / OpenPCDet dependencies.
+
+The validated environment is:
 
 | Item | Version |
 | --- | --- |
@@ -125,16 +123,137 @@ OpenFusion was validated with the following environment:
 | MMEngine | 0.10.7 |
 | OpenPCDet | 0.6.0 |
 
-Activate your environment before training or testing:
+The reported CUDA version in `nvidia-smi` is the maximum CUDA version supported by the driver. The runtime version used by this project is the CUDA version compiled into PyTorch, namely `torch.version.cuda == 11.7` in the validated setup.
+
+### Step 1. Create a Conda Environment
+
+Install Miniconda or Anaconda first, then create a clean Python 3.8 environment:
 
 ```bash
+conda create -n fusionrepo python=3.8 -y
 conda activate fusionrepo
+```
+
+### Step 2. Install PyTorch
+
+Install PyTorch before installing OpenMMLab packages, because MMCV and MMDetection3D select binary extensions according to the PyTorch and CUDA versions.
+
+```bash
+conda install pytorch==1.13.1 torchvision==0.14.1 pytorch-cuda=11.7 -c pytorch -c nvidia -y
+```
+
+Verify PyTorch and CUDA:
+
+```bash
 python --version
 python -c "import torch; print(torch.__version__, torch.version.cuda)"
+python -c "import torch; print('cuda available:', torch.cuda.is_available())"
 nvidia-smi
 ```
 
-The reported CUDA version in `nvidia-smi` is the maximum CUDA version supported by the driver. The runtime version used by this project is the CUDA version compiled into PyTorch, namely `torch.version.cuda == 11.7` in the validated setup.
+### Step 3. Install OpenMMLab Dependencies
+
+Install MIM first, then install MMEngine, MMCV, MMDetection, and MMDetection3D. MIM is recommended because it resolves many binary compatibility details for OpenMMLab packages.
+
+```bash
+pip install -U openmim
+mim install mmengine==0.10.7
+mim install mmcv==2.1.0
+mim install mmdet==3.3.0
+mim install mmdet3d==1.4.0
+```
+
+If your platform cannot resolve `mmcv==2.1.0` automatically, install the wheel that matches PyTorch 1.13 and CUDA 11.7:
+
+```bash
+pip install mmcv==2.1.0 -f https://download.openmmlab.com/mmcv/dist/cu117/torch1.13/index.html
+```
+
+### Step 4. Install General Python Dependencies
+
+Install the scientific and vision packages used by the data loading, geometry, visualization, and evaluation utilities:
+
+```bash
+pip install numpy==1.23.5 scipy==1.10.1 opencv-python open3d pillow tqdm matplotlib pyyaml tensorboard
+```
+
+### Step 5. Install OpenPCDet
+
+Some reconstructed models use OpenPCDet-style point cloud backbones or checkpoint formats. Install OpenPCDet in editable mode so its local modules can be imported by the training and testing scripts:
+
+```bash
+git clone https://github.com/open-mmlab/OpenPCDet.git
+cd OpenPCDet
+git checkout v0.6.0
+pip install -r requirements.txt
+python setup.py develop
+cd ..
+```
+
+If you already maintain a local OpenPCDet checkout, install that copy instead and make sure `import pcdet` works in the `fusionrepo` environment.
+
+### Step 6. Clone OpenFusion and Set PYTHONPATH
+
+Clone this repository and enter the project root:
+
+```bash
+git clone https://github.com/MSFTest/OpenFusion.git
+cd OpenFusion
+```
+
+For source-tree execution, expose the repository root to Python:
+
+```bash
+export PYTHONPATH="$(pwd):$PYTHONPATH"
+```
+
+You can also add the line above to `~/.bashrc` or your conda activation script if you use OpenFusion frequently.
+
+### Step 7. Prepare Checkpoints
+
+Place the required 2D detector, 3D detector, and fusion checkpoints under `checkpoints/`. The current scripts use paths such as:
+
+```text
+checkpoints/faster_rcnn_r50_caffe_fpn_mstrain_1x_coco-5324cff8.pth
+checkpoints/hv_PartA2_secfpn_2x8_cyclic_80e_kitti-3d-car_20210831_022017-cb7ff621.pth
+checkpoints/pv_rcnn_8xb2-80e_kitti-3d-3class_20221117_234428-b384d22f.pth
+checkpoints/hmfi_fusion_trained.pth
+checkpoints/logonet_fusion_trained.pth
+checkpoints/clocs_fusion_trained.pth
+```
+
+The released fusion checkpoints are listed in the [Model Zoo](#model-zoo). Backbone checkpoints can be downloaded from the corresponding MMDetection, MMDetection3D, or OpenPCDet model releases.
+
+### Step 8. Verify the Installation
+
+Run the following checks from the OpenFusion root:
+
+```bash
+python -c "import torch; print('torch:', torch.__version__, 'cuda:', torch.version.cuda, 'available:', torch.cuda.is_available())"
+python -c "import mmcv, mmdet, mmdet3d, mmengine; print('mmcv:', mmcv.__version__); print('mmdet:', mmdet.__version__); print('mmdet3d:', mmdet3d.__version__); print('mmengine:', mmengine.__version__)"
+python -c "import pcdet; print('pcdet imported')"
+python -c "import utils, common, fusion_unit; import torch; x=torch.ones(2,3); y=torch.ops.fusionrepo.feature_fusion_weighted_sum(torch.stack([x,x]), torch.tensor([0.5,0.5])); print(y.shape, y.sum().item())"
+```
+
+Expected output:
+
+```text
+torch: 1.13.1+cu117 cuda: 11.7 available: True
+mmcv: 2.1.0
+mmdet: 3.3.0
+mmdet3d: 1.4.0
+mmengine: 0.10.7
+pcdet imported
+torch.Size([2, 3]) 6.0
+```
+
+### Troubleshooting
+
+- If `torch.cuda.is_available()` is `False`, check the NVIDIA driver, conda environment, and whether the installed PyTorch build is CUDA-enabled.
+- If MMCV fails to import CUDA extensions, reinstall MMCV with a wheel matching your PyTorch and CUDA versions.
+- If `mmdet3d` cannot import custom ops, reinstall MMDetection3D after PyTorch and MMCV are already installed.
+- If `pcdet` cannot be imported, confirm that OpenPCDet was installed with `python setup.py develop` inside the active `fusionrepo` environment.
+- If OpenFusion operators are missing from `torch.ops.fusionrepo`, make sure `utils`, `common`, and `fusion_unit` are imported before calling the operator namespace.
 
 ## Dataset Preparation
 
