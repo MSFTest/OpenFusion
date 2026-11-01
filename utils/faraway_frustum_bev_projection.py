@@ -37,6 +37,13 @@ def _faraway_frustum_bev_projection_impl(
 
     group_count, max_points, _ = clusters.shape
     valid = torch.arange(max_points, device=clusters.device).unsqueeze(0) < counts.unsqueeze(1)
+    valid = (
+        valid
+        & (clusters[..., 0] >= -float(x_range))
+        & (clusters[..., 0] < float(x_range))
+        & (clusters[..., 2] >= -float(z_range))
+        & (clusters[..., 2] < float(z_range))
+    )
     batch_indices = torch.arange(group_count, device=clusters.device).unsqueeze(1).expand(-1, max_points)
     x_indices = torch.clamp(
         (((clusters[..., 0] + float(x_range)) / (2.0 * float(x_range))) * bev_width).long(),

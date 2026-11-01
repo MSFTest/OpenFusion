@@ -8,6 +8,8 @@ from __future__ import annotations
 import torch
 from torch.library import Library
 
+import utils.voxel_features_to_bev_scatter  # noqa: F401
+
 
 def _bevfusion_camera_bev_pooling_impl(
     feat_3d: torch.Tensor,

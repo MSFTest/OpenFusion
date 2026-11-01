@@ -12,6 +12,19 @@ import torch.nn as nn
 from typing import Any, Optional, List, Tuple
 
 
+def _clone_tensor_tree(value):
+    """Copy input containers and tensors before an independent model forward."""
+    if torch.is_tensor(value):
+        return value.clone()
+    if isinstance(value, dict):
+        return {key: _clone_tensor_tree(item) for key, item in value.items()}
+    if isinstance(value, list):
+        return [_clone_tensor_tree(item) for item in value]
+    if isinstance(value, tuple):
+        return tuple(_clone_tensor_tree(item) for item in value)
+    return value
+
+
 class PointCloudFeatureInterface(nn.Module):
     """
     点云特征提取接口
@@ -39,7 +52,11 @@ class PointCloudFeatureInterface(nn.Module):
         feat_index: Optional[int] = None,
         use_detection: bool = True,
         voxel_size: Optional[Tuple[float, float, float]] = None,
-        point_cloud_range: Optional[Tuple[float, float, float, float, float, float]] = None
+        point_cloud_range: Optional[Tuple[float, float, float, float, float, float]] = None,
+        target_class_name: Optional[str] = None,
+        score_input_type: str = "probability",
+        point_cloud_feature_level: str = "voxel",
+        proposal_source: str = "final",
     ):
         super().__init__()
         self.extractor = extractor
@@ -47,6 +64,27 @@ class PointCloudFeatureInterface(nn.Module):
         self.use_detection = use_detection
         self.voxel_size = voxel_size
         self.point_cloud_range = point_cloud_range
+        if point_cloud_feature_level not in {"voxel", "middle_stage3", "middle_stage4"}:
+            raise ValueError(
+                "point_cloud_feature_level must be 'voxel', 'middle_stage3', or 'middle_stage4'"
+            )
+        self.point_cloud_feature_level = point_cloud_feature_level
+        if proposal_source not in {"final", "rpn"}:
+            raise ValueError("proposal_source must be 'final' or 'rpn'")
+        self.proposal_source = proposal_source
+        if score_input_type not in ("probability", "logit"):
+            raise ValueError("score_input_type must be 'probability' or 'logit'")
+        self.score_input_type = score_input_type
+        self.target_class_index = None
+        if target_class_name is not None:
+            dataset_meta = getattr(extractor, "dataset_meta", None)
+            classes = dataset_meta.get("classes") if isinstance(dataset_meta, dict) else None
+            if not classes:
+                raise ValueError("target_class_name requires extractor.dataset_meta['classes']")
+            if target_class_name not in classes:
+                raise ValueError(f"target class {target_class_name!r} is absent from dataset_meta['classes']={classes!r}")
+            self.target_class_index = classes.index(target_class_name)
+        self.target_class_name = target_class_name
 
     def _cfg_get(self, obj: Any, key: str):
         if obj is None:
@@ -104,6 +142,8 @@ class PointCloudFeatureInterface(nn.Module):
         return (xyz_indices + 0.5) * voxel_size_t + pc_min_t
 
     def _feature_layout(self, feat: torch.Tensor) -> str:
+        if hasattr(feat, "features") and hasattr(feat, "indices"):
+            return "sparse_tensor"
         if not torch.is_tensor(feat):
             return "unknown"
         if feat.dim() == 2:
@@ -114,9 +154,90 @@ class PointCloudFeatureInterface(nn.Module):
             if feat.shape[1] <= 2048 and feat.shape[1] >= feat.shape[-1]:
                 return "bev_bchw"
             return "bev_bhwc"
-        if hasattr(feat, "features") and hasattr(feat, "indices"):
-            return "sparse_tensor"
         return f"tensor_{feat.dim()}d"
+
+    def _predict_middle_stage(self, inputs, data_samples, batch_size):
+        stage_name, stage_index, stride = {
+            "middle_stage3": ("middle_stage3", 2, 4),
+            "middle_stage4": ("middle_stage4", 3, 8),
+        }[self.point_cloud_feature_level]
+        middle_encoder = getattr(self.extractor, "middle_encoder", None)
+        encoder_layers = getattr(middle_encoder, "encoder_layers", None)
+        try:
+            stage = encoder_layers[stage_index]
+        except (TypeError, IndexError, KeyError):
+            raise ValueError(
+                f"point detector does not expose middle_encoder.encoder_layers for {stage_name}"
+            ) from None
+        if not isinstance(stage, nn.Module):
+            raise ValueError(f"point detector {stage_name} is not a module")
+
+        captured = []
+
+        def capture(_module, _inputs, output):
+            if captured:
+                raise RuntimeError(f"PartA2 {stage_name} ran more than once during predict")
+            features = getattr(output, "features", None)
+            indices = getattr(output, "indices", None)
+            spatial_shape = getattr(output, "spatial_shape", None)
+            if not torch.is_tensor(features) or features.ndim != 2:
+                raise ValueError(f"PartA2 {stage_name} must return SparseConvTensor features shaped (N, C)")
+            if features.shape[1] != 64:
+                raise ValueError(
+                    f"PartA2 {stage_name} must return 64 channels, got {features.shape[1]}"
+                )
+            if not torch.is_tensor(indices) or indices.ndim != 2 or indices.shape != (features.shape[0], 4):
+                raise ValueError(f"PartA2 {stage_name} indices must have shape (N, 4) aligned with features")
+            try:
+                spatial_shape = tuple(int(value) for value in spatial_shape)
+            except (TypeError, ValueError):
+                raise ValueError(f"PartA2 {stage_name} must expose a three-dimensional spatial_shape") from None
+            if len(spatial_shape) != 3 or any(value <= 0 for value in spatial_shape):
+                raise ValueError(f"PartA2 {stage_name} must expose a positive three-dimensional spatial_shape")
+            if not torch.isfinite(features).all():
+                raise ValueError(f"PartA2 {stage_name} features must be finite")
+            if indices.is_floating_point() and (
+                not torch.isfinite(indices).all() or not torch.equal(indices, indices.round())
+            ):
+                raise ValueError(f"PartA2 {stage_name} indices must be finite integers")
+            indices = indices.to(device=features.device, dtype=torch.long)
+            if indices.numel():
+                if ((indices[:, 0] < 0) | (indices[:, 0] >= batch_size)).any():
+                    raise ValueError(f"PartA2 {stage_name} batch indices are outside the input batch")
+                limits = indices.new_tensor(spatial_shape)
+                if ((indices[:, 1:] < 0) | (indices[:, 1:] >= limits)).any():
+                    raise ValueError(f"PartA2 {stage_name} coordinates are outside spatial_shape")
+            captured.append((features, indices, spatial_shape))
+
+        handle = stage.register_forward_hook(capture)
+        try:
+            if self.use_detection and self.proposal_source == "rpn":
+                rpn_head = getattr(self.extractor, "rpn_head", None)
+                if rpn_head is None or not hasattr(rpn_head, "predict"):
+                    raise ValueError("point detector does not expose rpn_head.predict")
+                feats_dict = self.extractor.extract_feat(inputs)
+                predictions = rpn_head.predict(feats_dict, data_samples)
+            elif self.use_detection:
+                predictions = self.extractor.predict(inputs, data_samples)
+            else:
+                predictions = None
+                self.extractor.extract_feat(inputs)
+        finally:
+            handle.remove()
+
+        if len(captured) != 1:
+            raise ValueError(f"predict did not capture the requested PartA2 feature {stage_name}")
+        features, indices, spatial_shape = captured[0]
+        voxel_size, point_cloud_range = self._infer_voxel_params()
+        if voxel_size is None or point_cloud_range is None:
+            raise ValueError(f"voxel_size and point_cloud_range are required for {stage_name} coordinates")
+        voxel_size_t = features.new_tensor(voxel_size, dtype=torch.float32) * stride
+        pc_min_t = features.new_tensor(point_cloud_range[:3], dtype=torch.float32)
+        xyz_indices = indices[:, [3, 2, 1]].to(dtype=torch.float32)
+        centers = (xyz_indices + 0.5) * voxel_size_t + pc_min_t
+        if not torch.isfinite(centers).all():
+            raise ValueError(f"PartA2 {stage_name} centers must be finite")
+        return predictions, features, indices, centers
 
     def _normalize_points_input(
         self,
@@ -150,7 +271,7 @@ class PointCloudFeatureInterface(nn.Module):
             **kwargs: 额外参数会被忽略
 
         Returns:
-            dict with pts_feats, voxel_coords, voxels, voxel_num_points, flat_rois, flat_roi_batch_indices
+            dict with pts_feats, flat_point_batch_indices, voxel_coords, voxels, voxel_num_points, flat_rois, flat_roi_batch_indices
         """
         points_list = self._normalize_points_input(points)
         batch_size = len(points_list)
@@ -190,26 +311,47 @@ class PointCloudFeatureInterface(nn.Module):
             voxels = voxels[..., :3].contiguous()
 
         aligned_voxel_features = None
-        if (
+        middle_predictions = None
+        proposal_predictions = None
+        if self.point_cloud_feature_level != "voxel":
+            middle_predictions, pts_feats, voxel_coords, voxel_centers_lidar = self._predict_middle_stage(
+                _clone_tensor_tree(batch_inputs_dict), batch_data_samples, batch_size
+            )
+            feats = {self.point_cloud_feature_level: pts_feats}
+            selected_feat = pts_feats
+        elif (
             voxels is not None
             and voxel_coords is not None
             and voxel_num_points is not None
             and hasattr(self.extractor, "voxel_encoder")
         ):
             try:
-                voxel_input = batch_inputs_dict["voxels"]
+                # Some legacy PillarFeatureNet implementations decorate point
+                # coordinates in-place. Keep this auxiliary aligned-feature
+                # pass from changing the inputs used by detector inference.
+                voxel_input = _clone_tensor_tree(batch_inputs_dict["voxels"])
                 aligned_voxel_features = self.extractor.voxel_encoder(
                     voxel_input["voxels"],
                     voxel_input["num_points"],
                     voxel_input["coors"]
                 )
-            except Exception:
-                aligned_voxel_features = None
+            except Exception as exc:
+                raise RuntimeError("point detector voxel feature extraction failed") from exc
 
-        # 提取特征 - 传入 data_preprocessor 处理后的 batch_inputs_dict
-        feats = self.extractor.extract_feat(batch_inputs_dict)
+        # extract_feat and predict are independent forwards, as in an official
+        # test_step's single predict call. Give each a fresh copy because voxel
+        # encoders may modify preprocessed tensors in-place.
+        if self.point_cloud_feature_level == "voxel":
+            feats = self.extractor.extract_feat(_clone_tensor_tree(batch_inputs_dict))
+            if self.use_detection and self.proposal_source == "rpn":
+                rpn_head = getattr(self.extractor, "rpn_head", None)
+                if rpn_head is None or not hasattr(rpn_head, "predict"):
+                    raise ValueError("point detector does not expose rpn_head.predict")
+                proposal_predictions = rpn_head.predict(feats, batch_data_samples)
 
-        if aligned_voxel_features is not None:
+        if self.point_cloud_feature_level != "voxel":
+            pass
+        elif aligned_voxel_features is not None:
             pts_feats = aligned_voxel_features
         elif isinstance(feats, dict):
             candidate_keys = (
@@ -239,10 +381,17 @@ class PointCloudFeatureInterface(nn.Module):
         else:
             pts_feats = feats
 
-        selected_feat = pts_feats
+        if self.point_cloud_feature_level == "voxel":
+            selected_feat = pts_feats
         feature_layout = self._feature_layout(selected_feat)
 
         # 如果是4D特征图 (B, H, W, C)，展平为2D (B*H*W, C)
+        flat_point_batch_indices = None
+        if self.point_cloud_feature_level != "voxel":
+            flat_point_batch_indices = voxel_coords[:, 0].to(device=pts_feats.device, dtype=torch.long)
+        if pts_feats.dim() == 4:
+            batch_count, height, width, _ = pts_feats.shape
+            flat_point_batch_indices = torch.arange(batch_count, device=pts_feats.device).repeat_interleave(height * width)
         if pts_feats.dim() == 4:
             B, H, W, C = pts_feats.shape
             pts_feats = pts_feats.permute(0, 3, 1, 2).contiguous()  # (B, C, H, W)
@@ -250,10 +399,30 @@ class PointCloudFeatureInterface(nn.Module):
             pts_feats = pts_feats.permute(0, 2, 1).contiguous()  # (B, H*W, C)
             pts_feats = pts_feats.view(-1, C)  # (B*H*W, C)
 
-        voxel_centers_lidar = self._compute_voxel_centers_lidar(voxel_coords)
+        if pts_feats.dim() != 2:
+            raise ValueError("point features must flatten to (N, C) before assigning batch indices")
+        if flat_point_batch_indices is None:
+            if voxel_coords is not None:
+                if not torch.is_tensor(voxel_coords) or voxel_coords.ndim != 2 or voxel_coords.shape[1] < 1:
+                    raise ValueError("voxel coordinates must include a batch-index column")
+                flat_point_batch_indices = voxel_coords[:, 0].to(device=pts_feats.device, dtype=torch.long)
+            elif batch_size == 1:
+                flat_point_batch_indices = torch.zeros((pts_feats.shape[0],), device=pts_feats.device, dtype=torch.long)
+            elif pts_feats.shape[0] == 0:
+                flat_point_batch_indices = torch.zeros((0,), device=pts_feats.device, dtype=torch.long)
+            else:
+                raise ValueError("flat point batch indices are required for multiple samples")
+        if flat_point_batch_indices.numel() != pts_feats.shape[0]:
+            raise ValueError("flat point batch indices must align with point features")
+        flat_point_batch_indices = flat_point_batch_indices.to(device=pts_feats.device, dtype=torch.long)
+        if ((flat_point_batch_indices < 0) | (flat_point_batch_indices >= batch_size)).any():
+            raise ValueError("flat point batch indices must be within the input batch")
 
+        if self.point_cloud_feature_level == "voxel":
+            voxel_centers_lidar = self._compute_voxel_centers_lidar(voxel_coords)
         result = {
             "pts_feats": pts_feats,
+            "flat_point_batch_indices": flat_point_batch_indices,
             "voxel_features": aligned_voxel_features,
             "raw_feats": feats,
             "selected_feat": selected_feat,
@@ -269,69 +438,104 @@ class PointCloudFeatureInterface(nn.Module):
         # 获取检测框
         if self.use_detection:
             try:
-                # 使用 torch.enable_grad 来确保梯度流可以继续
-                with torch.enable_grad():
+                # Data samples have a single consumer (predict); only the
+                # tensor inputs need fresh copies for independent forwards.
+                preds = middle_predictions
+                if preds is None:
+                    preds = proposal_predictions
+                if preds is None:
                     preds = self.extractor.predict(
-                        batch_inputs_dict,
+                        _clone_tensor_tree(batch_inputs_dict),
                         batch_data_samples
                     )
+            except Exception as exc:
+                batch_indices = list(range(batch_size))
+                raise RuntimeError(
+                    f"point detector predict failed for batch indices={batch_indices}: {exc}"
+                ) from exc
+            if not isinstance(preds, (list, tuple)) or len(preds) != batch_size:
+                result_count = len(preds) if isinstance(preds, (list, tuple)) else type(preds).__name__
+                raise ValueError(
+                    "point detector predict must return one result per sample: "
+                    f"received {result_count} results for batch_size={batch_size}"
+                )
 
-                # 解析检测框
-                flat_rois_list = []
-                flat_batch_idx_list = []
-                flat_score_list = []
-                flat_label_list = []
+            # 解析检测框；成功返回空预测是有效结果，不应和 predict 异常混淆。
+            flat_rois_list = []
+            flat_batch_idx_list = []
+            flat_score_list = []
+            flat_label_list = []
 
-                for b, pred in enumerate(preds):
-                    if hasattr(pred, "pred_instances_3d"):
-                        inst = pred.pred_instances_3d
-                        boxes = inst.bboxes_3d
-                        if hasattr(boxes, "tensor"):
-                            boxes = boxes.tensor
-                        if boxes.numel() > 0:
-                            flat_rois_list.append(boxes)
-                            flat_batch_idx_list.append(
-                                torch.full((boxes.shape[0],), b,
-                                          dtype=torch.long, device=boxes.device)
-                            )
-                            scores = getattr(inst, "scores_3d", None)
-                            if scores is None:
-                                scores = getattr(inst, "scores", None)
-                            if scores is not None:
-                                flat_score_list.append(scores.to(device=boxes.device))
-                            labels = getattr(inst, "labels_3d", None)
-                            if labels is None:
-                                labels = getattr(inst, "labels", None)
-                            if labels is not None:
-                                flat_label_list.append(labels.to(device=boxes.device, dtype=torch.long))
-
-                if len(flat_rois_list) > 0:
-                    result["flat_rois"] = torch.cat(flat_rois_list, dim=0)
-                    result["flat_roi_batch_indices"] = torch.cat(flat_batch_idx_list, dim=0)
-                    if len(flat_score_list) == len(flat_rois_list):
-                        result["flat_roi_scores"] = torch.cat(flat_score_list, dim=0)
-                    else:
-                        result["flat_roi_scores"] = torch.ones(
-                            (result["flat_rois"].shape[0],),
-                            dtype=result["flat_rois"].dtype,
-                            device=result["flat_rois"].device
+            for b, pred in enumerate(preds):
+                inst = getattr(pred, "pred_instances_3d", pred)
+                if hasattr(inst, "bboxes_3d"):
+                    boxes = inst.bboxes_3d
+                    if hasattr(boxes, "tensor"):
+                        boxes = boxes.tensor
+                    if boxes.numel() > 0:
+                        scores = getattr(inst, "scores_3d", None)
+                        if scores is None:
+                            scores = getattr(inst, "scores", None)
+                        labels = getattr(inst, "labels_3d", None)
+                        if labels is None:
+                            labels = getattr(inst, "labels", None)
+                        if self.target_class_name is not None and (scores is None or labels is None):
+                            raise ValueError("class filtering requires aligned detector scores and labels")
+                        if scores is not None:
+                            scores = scores.to(device=boxes.device).reshape(-1)
+                            if scores.numel() != boxes.shape[0]:
+                                raise ValueError("detector scores must align with boxes")
+                            if not torch.isfinite(scores).all():
+                                raise ValueError("detector scores must be finite")
+                            if self.score_input_type == "logit":
+                                scores = scores.sigmoid()
+                            elif ((scores < 0) | (scores > 1)).any():
+                                raise ValueError("detector scores declared as probabilities must be within [0, 1]")
+                        if labels is not None:
+                            labels = labels.to(device=boxes.device, dtype=torch.long).reshape(-1)
+                            if labels.numel() != boxes.shape[0]:
+                                raise ValueError("detector labels must align with boxes")
+                        if self.target_class_name is not None:
+                            keep = labels == self.target_class_index
+                            boxes = boxes[keep]
+                            scores = scores[keep]
+                            labels = torch.zeros((int(keep.sum().item()),), dtype=torch.long, device=boxes.device)
+                        if boxes.numel() == 0:
+                            continue
+                        # MMDet3D LiDAR boxes default to bottom-center origin;
+                        # MPCF ROIs, GT boxes, and box deltas use geometric centers.
+                        boxes = boxes.clone()
+                        boxes[:, 2] += boxes[:, 5] / 2
+                        flat_rois_list.append(boxes)
+                        flat_batch_idx_list.append(
+                            torch.full((boxes.shape[0],), b,
+                                      dtype=torch.long, device=boxes.device)
                         )
-                    if len(flat_label_list) == len(flat_rois_list):
-                        result["flat_roi_labels"] = torch.cat(flat_label_list, dim=0)
-                    else:
-                        result["flat_roi_labels"] = torch.zeros(
-                            (result["flat_rois"].shape[0],),
-                            dtype=torch.long,
-                            device=result["flat_rois"].device
-                        )
+                        if scores is not None:
+                            flat_score_list.append(scores)
+                        if labels is not None:
+                            flat_label_list.append(labels)
+
+            if len(flat_rois_list) > 0:
+                result["flat_rois"] = torch.cat(flat_rois_list, dim=0)
+                result["flat_roi_batch_indices"] = torch.cat(flat_batch_idx_list, dim=0)
+                if len(flat_score_list) == len(flat_rois_list):
+                    result["flat_roi_scores"] = torch.cat(flat_score_list, dim=0)
                 else:
-                    device = pts_feats.device
-                    result["flat_rois"] = pts_feats.new_zeros((0, 7))
-                    result["flat_roi_batch_indices"] = torch.zeros((0,), dtype=torch.long, device=device)
-                    result["flat_roi_scores"] = pts_feats.new_zeros((0,))
-                    result["flat_roi_labels"] = torch.zeros((0,), dtype=torch.long, device=device)
-
-            except Exception:
+                    result["flat_roi_scores"] = torch.ones(
+                        (result["flat_rois"].shape[0],),
+                        dtype=result["flat_rois"].dtype,
+                        device=result["flat_rois"].device
+                    )
+                if len(flat_label_list) == len(flat_rois_list):
+                    result["flat_roi_labels"] = torch.cat(flat_label_list, dim=0)
+                else:
+                    result["flat_roi_labels"] = torch.zeros(
+                        (result["flat_rois"].shape[0],),
+                        dtype=torch.long,
+                        device=result["flat_rois"].device
+                    )
+            else:
                 device = pts_feats.device
                 result["flat_rois"] = pts_feats.new_zeros((0, 7))
                 result["flat_roi_batch_indices"] = torch.zeros((0,), dtype=torch.long, device=device)

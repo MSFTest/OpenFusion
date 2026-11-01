@@ -124,16 +124,17 @@ def write_kitti_pred_txt_pcdet(
     calib_path: str,
     image_shape,
     cls_name: str = "Car",
-    score_thr: float = 0.0
+    score_thr: float = 0.0,
+    boxes_z_origin: str = "bottom",
 ):
     """
     直接使用 OpenPCDet 的 KITTI 转换逻辑
-    约定输入 boxes_lidar 当前来自你的工程:
-        [x, y, z, w, l, h, yaw]
-    OpenPCDet 期望:
-        [x, y, z, l, w, h, yaw]
-    所以这里会自动交换第4/5维
+    输入 box 格式为 [x, y, z, dx, dy, dz, yaw]，其中 dx=length、
+    dy=width、dz=height；z 原点由 boxes_z_origin 指定，默认是 bottom。
     """
+    if boxes_z_origin not in ("bottom", "center"):
+        raise ValueError("boxes_z_origin must be 'bottom' or 'center'")
+
     os.makedirs(pred_dir, exist_ok=True)
     data_dir = os.path.join(pred_dir, "data")
     os.makedirs(data_dir, exist_ok=True)
@@ -152,7 +153,8 @@ def write_kitti_pred_txt_pcdet(
 
 
     boxes_pcdet = boxes_lidar.copy()
-    boxes_pcdet[:, 2] = boxes_pcdet[:, 2] + boxes_pcdet[:, 5] / 2.0
+    if boxes_z_origin == "bottom":
+        boxes_pcdet[:, 2] += boxes_pcdet[:, 5] / 2.0
     calib_obj = Calibration(calib_path)
 
     # OpenPCDet 逻辑：LiDAR -> KITTI camera
@@ -166,6 +168,7 @@ def write_kitti_pred_txt_pcdet(
     )
     # OpenPCDet 逻辑里的 alpha
     alpha = boxes_camera[:, 6] - np.arctan2(boxes_camera[:, 0], boxes_camera[:, 2])
+    alpha = np.arctan2(np.sin(alpha), np.cos(alpha))
 
     lines = []
     H, W = int(image_shape[0]), int(image_shape[1])
@@ -186,8 +189,7 @@ def write_kitti_pred_txt_pcdet(
             continue
         if x2 <= x1 or y2 <= y1:
             continue
-        # 关键修正：OpenPCDet 这里的 y 是 box center，
-        # KITTI label_2 需要的是 bottom center
+        # OpenPCDet 已将 camera y 转为 KITTI label_2 所需的 bottom center。
 
         line = (
             f"{cls_name} 0 0 {alpha[i]:.6f} "
