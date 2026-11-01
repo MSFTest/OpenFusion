@@ -54,8 +54,7 @@ def _crop_points_in_3d_boxes_impl(
     Args:
         rois: (B, M, 8)
             [batch_idx, x, y, z, dx, dy, dz, yaw]
-            当前实现与原 MPCF 代码保持一致，只按轴对齐包围盒范围做筛选，
-            不使用 yaw 旋转。
+            XY 平面使用 yaw 旋转后的 ROI 局部坐标做筛选。
 
         points_xyz: (N, 3)
         points_feat: (N, C)
@@ -103,23 +102,28 @@ def _crop_points_in_3d_boxes_impl(
             roi = rois[b, m]
 
             cx, cy, cz = roi[1:4]
-            dx, dy, dz = roi[4:7]
+            dx, dy, dz, yaw = roi[4:8]
 
-            x_min = cx - dx / 2
-            x_max = cx + dx / 2
-            y_min = cy - dy / 2
-            y_max = cy + dy / 2
-            z_min = cz - dz / 2
-            z_max = cz + dz / 2
+            rel_x = px - cx
+            rel_y = py - cy
+            # CPU torch does not implement half-precision trigonometry.
+            trig_yaw = yaw.float() if yaw.dtype in (torch.float16, torch.bfloat16) else yaw
+            cos_yaw = torch.cos(trig_yaw).to(rel_x.dtype)
+            sin_yaw = torch.sin(trig_yaw).to(rel_y.dtype)
+            local_x = rel_x * cos_yaw + rel_y * sin_yaw
+            local_y = -rel_x * sin_yaw + rel_y * cos_yaw
+            rel_z = pz - cz
 
             mask = (
-                (px >= x_min) & (px <= x_max) &
-                (py >= y_min) & (py <= y_max) &
-                (pz >= z_min) & (pz <= z_max)
+                (local_x.abs() <= dx / 2) &
+                (local_y.abs() <= dy / 2) &
+                (rel_z.abs() <= dz / 2)
             )
 
             grouped_mask[b, m] = mask
-            grouped_features[b, m] = points_feat * mask.unsqueeze(-1).to(dtype)
+            grouped_features[b, m] = torch.where(
+                mask.unsqueeze(-1), points_feat, torch.zeros_like(points_feat)
+            )
 
     return grouped_features, grouped_mask
 
@@ -204,3 +208,26 @@ def crop_points_in_3d_boxes(
         points_xyz,
         points_feat
     )
+
+
+def iter_crop_points_in_3d_boxes(
+        rois: torch.Tensor,
+        points_xyz: torch.Tensor,
+        points_feat: torch.Tensor,
+        roi_chunk_size: int = 2):
+    """Yield ``(roi_start, features, mask)`` for bounded ROI slices.
+
+    Cropping is independent for each ROI, so slicing only the M axis preserves
+    the operator's values and autograd behavior while bounding the dense
+    ``(B, M, N, C)`` temporary to ``(B, roi_chunk_size, N, C)``.
+    """
+    roi_chunk_size = int(roi_chunk_size)
+    if roi_chunk_size <= 0:
+        raise ValueError("roi_chunk_size must be a positive integer")
+
+    for roi_start in range(0, rois.shape[1], roi_chunk_size):
+        roi_end = min(roi_start + roi_chunk_size, rois.shape[1])
+        grouped_features, grouped_mask = crop_points_in_3d_boxes(
+            rois[:, roi_start:roi_end], points_xyz, points_feat
+        )
+        yield roi_start, grouped_features, grouped_mask

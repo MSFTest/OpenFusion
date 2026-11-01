@@ -58,7 +58,7 @@ def _masked_reduce_pool_impl(
             fill_value = torch.finfo(x.dtype).min
         else:
             fill_value = torch.iinfo(x.dtype).min
-        masked = x.masked_fill(~mask_bool, fill_value)
+        masked = torch.where(mask_bool, x, torch.full_like(x, fill_value))
         out = masked.amax(dim=dim, keepdim=keepdim)
         if keepdim:
             valid_any = mask_bool.any(dim=dim, keepdim=True)
@@ -66,14 +66,17 @@ def _masked_reduce_pool_impl(
             valid_any = mask_bool.any(dim=dim, keepdim=False)
         return torch.where(valid_any, out, torch.zeros_like(out))
 
-    x_masked = x * mask_bool.to(dtype=x.dtype)
+    x_masked = torch.where(mask_bool, x, torch.zeros_like(x))
     if mode == "sum":
         return x_masked.sum(dim=dim, keepdim=keepdim)
 
     if mode == "mean":
-        summed = x_masked.sum(dim=dim, keepdim=keepdim)
-        counts = mask_bool.to(dtype=x.dtype).sum(dim=dim, keepdim=keepdim).clamp_min(1.0)
-        return summed / counts
+        low_precision = x.dtype in (torch.float16, torch.bfloat16)
+        acc_dtype = torch.float32 if low_precision else x.dtype
+        summed = x_masked.to(dtype=acc_dtype).sum(dim=dim, keepdim=keepdim)
+        counts = mask_bool.to(dtype=acc_dtype).sum(dim=dim, keepdim=keepdim).clamp_min(1.0)
+        result = summed / counts
+        return result.to(dtype=x.dtype) if low_precision else result
 
     raise ValueError(f"Unsupported reduce mode: {mode}")
 
