@@ -59,6 +59,14 @@ For implementation details, start from the corresponding model directory under `
 
 ## What's New
 
+**2026-11-01**: Added the reconstructed **F-ConvNet** network to OpenFusion. Released the complete reconstruction pipeline and evaluation results on the KITTI dataset.
+
+**2026-10-06**: Added the reconstructed **PointPainting** network to OpenFusion. Released the complete reconstruction pipeline and evaluation results on the KITTI dataset.
+
+**2026-09-08**: Added the reconstructed **Faraway-Frustum** network to OpenFusion. Released the complete reconstruction pipeline and evaluation results on the KITTI dataset.
+
+**2026-08-10**: Added the reconstructed **EPNet++** network to OpenFusion. Released the complete reconstruction pipeline and evaluation results on the KITTI dataset.
+
 **2026-07-16**: Added the reconstructed **EPNet** network to OpenFusion. Released the complete reconstruction pipeline, trained checkpoints, and evaluation results on the KITTI dataset.
 
 **2026-07-08**: OpenFusion is organized as a GitHub repository with an operatorized multimodal fusion library and four released trained model directories: **BEVFusion**, **CLOCs**, **HMFI**, and **LoGoNet**.
@@ -94,13 +102,17 @@ OpenFusion/
 
 ### KITTI 3D Object Detection Results: Car
 
-| Method | Modality | Ours 3D AP (Easy/Mod./Hard) | Ours BEV AP (Easy/Mod./Hard) | Paper 3D AP (Easy/Mod./Hard) | Paper BEV AP (Easy/Mod./Hard) | Pretrained Weights |
-| --- | --- | --- | --- | --- | --- | --- |
-| [CLOCS](https://arxiv.org/abs/2009.00784) | LiDAR + Camera | **89.35/85.39/80.28** | **95.55/89.94/84.50** | 88.94/80.67/77.15 | 93.05/89.80/86.57 | [Download](https://drive.google.com/file/d/1Bqo5Q7DqQFM9B9myeS4m-iMzfPVWkwce/view?usp=drive_link) |
-| [LoGoNet](https://arxiv.org/abs/2303.03595) | LiDAR + Camera | 87.39/78.36/75.04 | **91.08/85.00/83.80** | 91.80/85.06/80.74 | - | [Download](https://drive.google.com/file/d/1W0yIp6YS6x9yD9g83YjJumCSLX6u0Soa/view?usp=drive_link) |
-| [HMFI](https://arxiv.org/abs/2210.09615) | LiDAR + Camera | **91.73/80.41/75.44** | **95.62/89.73/84.84** | 88.90/81.93/77.30 | - | [Download](https://drive.google.com/file/d/14n1WIC8r6CXTeoQWlzODQvXMEt27uD4s/view?usp=drive_link) |
-| [BEVFusion](https://arxiv.org/abs/2205.13542) | LiDAR + Camera | 91.73/80.41/75.44 | **95.62/89.73/84.84** | - | - | Local release |
-| [EPNet](https://arxiv.org/abs/2007.08856) | LiDAR + Camera | **93.03/86.37/83.68** | **96.40/92.29/91.69** | 89.81/79.28/74.59 | 94.22/88.47/83.69 | Local release |
+| Method | Modality | Ours 3D AP (Easy/Mod./Hard) | Paper 3D AP (Easy/Mod./Hard) | Pretrained Weights |
+| --- | --- | --- | --- | --- |
+| [CLOCS](https://arxiv.org/abs/2009.00784) | LiDAR + Camera | **89.35**/**85.39**/**80.28** | 88.94/80.67/77.15 | [Download](https://drive.google.com/file/d/1Bqo5Q7DqQFM9B9myeS4m-iMzfPVWkwce/view?usp=drive_link) |
+| [LoGoNet](https://arxiv.org/abs/2303.03595) | LiDAR + Camera | 87.39/78.36/75.04 | 91.80/85.06/80.74 | [Download](https://drive.google.com/file/d/1W0yIp6YS6x9yD9g83YjJumCSLX6u0Soa/view?usp=drive_link) |
+| [HMFI](https://arxiv.org/abs/2210.09615) | LiDAR + Camera | **88.33**/79.60/74.45 | 88.90/81.93/77.30 | [Download](https://drive.google.com/file/d/14n1WIC8r6CXTeoQWlzODQvXMEt27uD4s/view?usp=drive_link) |
+| [BEVFusion](https://arxiv.org/abs/2205.13542) | LiDAR + Camera | 91.73/80.41/75.45 | - | Local release |
+| [EPNet](https://arxiv.org/abs/2007.08856) | LiDAR + Camera | **93.03**/**86.37**/**83.68** | 89.81/79.28/74.59 | Local release |
+| [EPNet++](https://arxiv.org/abs/2112.11088) | LiDAR + Camera | **91.02**/**84.03**/**83.64** | 91.37/81.96/76.71 |  |
+| [Faraway-Frustum](https://arxiv.org/abs/2011.01404) | LiDAR + Camera | 87.46/84.86/84.54 | 96.73/93.17/85.76 |  |
+| [PointPainting](https://arxiv.org/abs/1911.10150) | LiDAR + Camera | **88.29**/**83.55**/**77.11** | PointPillars: 86.26/76.77/70.25 |  |
+| [F-ConvNet](https://arxiv.org/abs/1903.01864) | LiDAR + Camera | **89.85**/**84.54**/75.54 | 89.31/79.08/77.17 |  |
 
 ## Installation
 
